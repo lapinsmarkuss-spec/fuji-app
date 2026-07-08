@@ -20,7 +20,6 @@ st.title("Fujifilm Receptes Ģenerators PRO 📷 | X-M5 & X-T3")
 st.write("Ekskluzīvi pielāgots tavam arsenālam. AI perceptuālā analīze + precīza aparatūras emulācija.")
 
 # --- 2. KAMERĀM SPECIFISKĀ DATUBĀZE ---
-# Sistēma zina, kuras receptes strādā tikai uz jaunā X-Processor 5 (X-M5) un kuras ir universālas.
 RECIPE_DB = {
     "X-M5 Reala Everyday": {
         "profile": {"C": 50, "S": 65, "W": 5, "T": -2},
@@ -66,11 +65,11 @@ RECIPE_DB = {
 
 # --- 3. SĀNJOSLAS KONTROLES ---
 st.sidebar.header("📷 Izvēlies Tehniku")
-selected_camera = st.sidebar.radio(
-    "Aktīvā kamera rokās:",
-    ["Fujifilm X-M5", "Fujifilm X-T3"]
-)
-st.sidebar.caption("Sistēma automātiski izslēgs iestatījumus (kā Clarity vai FX Blue), kas nav pieejami tava modeļa izvēlnēs.")
+selected_camera = st.sidebar.radio("Aktīvā kamera rokās:", ["Fujifilm X-M5", "Fujifilm X-T3"])
+
+# MANUĀLAIS SLĒDZIS
+skin_protection_manual = st.sidebar.checkbox("Aktivizēt ādas toņu aizsardzību", value=True)
+st.sidebar.caption("Bloķē agresīvas filmas portretiem.")
 
 bias_preference = st.sidebar.selectbox(
     "Analīzes prioritāte:",
@@ -84,7 +83,7 @@ elif bias_preference == "Noskaņa un Kontrasts":
 else:
     W_C, W_S, W_W, W_T = 2.0, 1.5, 1.2, 1.2
 
-# --- 4. MAX PRO DZINĒJS AR ĀDAS TOŅU AIZSARDZĪBU ---
+# --- 4. MAX PRO DZINĒJS ---
 @st.cache_data(show_spinner=False)
 def analyze_image_ultimate(img_bytes):
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -96,7 +95,6 @@ def analyze_image_ultimate(img_bytes):
     img_np = np.array(cropped).astype(np.float32)
     r, g, b = img_np[:,:,0], img_np[:,:,1], img_np[:,:,2]
 
-    # Ādas toņu analīze un aizsardzība
     skin_mask = (r > 95) & (g > 40) & (b > 20) & ((np.maximum(r, np.maximum(g, b)) - np.minimum(r, np.minimum(g, b))) > 15) & (np.abs(r - g) > 15) & (r > g) & (r > b)
     skin_ratio = np.sum(skin_mask) / skin_mask.size
     has_people = skin_ratio > 0.08 
@@ -140,7 +138,6 @@ def draw_recipe_card(name, camera, rec_data, grain, cc, ccb, clarity, dr, r_wb, 
         ("Color", rec_data['color']), ("Sharpness", "0"), ("Noise Reduction", "-4")
     ]
     
-    # Renderējam tikai tos iestatījumus, kas fiziski eksistē izvēlētajai kamerai
     if camera == "Fujifilm X-M5":
         settings.extend([("Clarity", clarity), ("Grain Effect", grain), ("Color Chrome Effect", cc), ("Color Chrome FX Blue", ccb)])
     else:
@@ -178,18 +175,23 @@ if img_source:
         st.image(img_source, caption=f"Avots analizēts priekš: {selected_camera}", use_column_width=True)
         with st.spinner("Skripts krakšķina datus..."):
             data = analyze_image_ultimate(img_source)
-        if data["has_people"]:
-            st.warning("👤 Kadrā ir ādas toņi! Bloķēju agresīvas filmas un pielāgoju krāsu nobīdi.")
+        
+        # Loģika ar manuālo slēdzi
+        is_protected = skin_protection_manual and data["has_people"]
+        
+        if is_protected:
+            st.warning("👤 Ādas toņu aizsardzība AKTĪVA. Bloķēju agresīvas filmas.")
+        else:
+            st.info("🔓 Aizsardzība izslēgta - tiek piemēroti visi stila efekti.")
 
     min_distance = float('inf')
     best_match = None
 
     for name, recipe in RECIPE_DB.items():
-        # Filtrejam ārā receptes, ko kamera neatbalsta
         if selected_camera not in recipe["cameras"]: continue
         if data["S"] < 18 and name != "Ilford HP5 Plus (B&W)": continue
         
-        penalty = 150 if data["has_people"] and not recipe["safe_for_skin"] else 0
+        penalty = 150 if is_protected and not recipe["safe_for_skin"] else 0
         p = recipe["profile"]
         dist = math.sqrt(
             W_C * (data["C"] - p["C"])**2 + W_S * (data["S"] - p["S"])**2 + 
@@ -200,7 +202,6 @@ if img_source:
             min_distance = dist
             best_match = name
 
-    # Defaultās drošības vērtības atkarībā no kameras
     if not best_match: 
         best_match = "Ilford HP5 Plus (B&W)" if data["S"] < 18 else ("X-M5 Reala Everyday" if selected_camera == "Fujifilm X-M5" else "Portra 400 (X-T3 Adapted)")
     rec = RECIPE_DB[best_match]
@@ -211,7 +212,6 @@ if img_source:
         clarity_effect = "-2" if data["texture"] < 12 else ("+2" if data["texture"] > 42 else "0")
         cc_blue = "Strong" if data["blue_int"] > 35 else ("Weak" if data["blue_int"] > 15 else "Off")
     else: 
-        # X-T3 ierobežojumi (nav Large/Small izvēles un nav Clarity/FX Blue)
         grain_effect = "Strong" if data["texture"] > 38 else ("Weak" if data["texture"] > 22 else "Off")
         clarity_effect = "N/A"
         cc_blue = "N/A"
